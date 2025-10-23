@@ -2,27 +2,54 @@
 import { supabase } from "@/supabase-client";
 import { Session } from "@supabase/supabase-js";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 
 interface Task {
     id: number;
     title: string;
     description: string;
     created_at: string;
-    // image_url: string;
+    image_url: string;
 }
 
 export default function TaskManager({ session }: { session: Session }) {
-    const [newTask, setNewTask] = useState({ title: "", description: "" })
-    const [tasks, setTasks] = useState<Task[]>([])
-    const [newDescription, setNewDescription] = useState("")
+    const [newTask, setNewTask] = useState({ title: "", description: "" });
+    const [tasks, setTasks] = useState<Task[]>([]);
+    const [newDescription, setNewDescription] = useState("");
+    const [taskImage, setTaskImage] = useState<File | null>(null);
+
+    const uploadImage = async (file: File): Promise<string | null> => {
+
+        const filePath = `${file.name}-${Date.now()}`  // unique file path name
+
+        const { error } = await supabase.storage
+            .from("tasks-images")
+            .upload(filePath, file);
+
+        if (error) {
+            console.error("error in uploading file: ", error.message);
+            return null;
+        }
+
+        const { data } = await supabase.storage
+            .from("tasks-images")
+            .getPublicUrl(filePath);
+
+        return data.publicUrl;
+    }
 
     const handleSubmit = async (e: any) => {
         e.preventDefault();
 
+        let imageUrl: string | null = null;
+        if (taskImage) {
+            imageUrl = await uploadImage(taskImage)
+        }
+
         const { error } = await supabase
             .from("tasks")
-            .insert({ ...newTask, email: session.user.email })
+            .insert({ ...newTask, email: session.user.email, image_url: imageUrl })
+            .select()
             .single();
 
         if (error) {
@@ -75,83 +102,33 @@ export default function TaskManager({ session }: { session: Session }) {
 
     }
 
-    const handleFileChange = () => {
-
+    const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files.length > 0) {
+            setTaskImage(e.target.files[0]);
+        }
     }
 
     useEffect(() => {
         fetchTasks();
     }, [deleteTask, updateTask])
 
+    useEffect(() => {
+        const channel = supabase.channel("tasks-channel");
+        channel
+            .on(
+                "postgres_changes",
+                { event: "INSERT", schema: "public", table: "tasks" },
+                (payload) => {
+                    const newTask = payload.new as Task;
+                    setTasks((prev) => [...prev, newTask]);
+                }
+            )
+            .subscribe((status) => {
+                console.log("Subscription: ", status);
+            });
+    }, []);
+
     return (
-        // <div style={{ maxWidth: "600px", margin: "0 auto", padding: "1rem" }}>
-        //   <h2>Task Manager CRUD</h2>
-
-        //   {/* Form to add a new task */}
-        //   <form onSubmit={handleSubmit} style={{ marginBottom: "1rem" }}>
-        //     <input
-        //       type="text"
-        //       placeholder="Task Title"
-        //       onChange={(e) =>
-        //         setNewTask((prev) => ({ ...prev, title: e.target.value }))
-        //       }
-        //       style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }}
-        //     />
-        //     <textarea
-        //       placeholder="Task Description"
-        //       onChange={(e) =>
-        //         setNewTask((prev) => ({ ...prev, description: e.target.value }))
-        //       }
-        //       style={{ width: "100%", marginBottom: "0.5rem", padding: "0.5rem" }}
-        //     />
-
-        //     <input type="file" accept="image/*" />
-
-        //     <button type="submit" style={{ padding: "0.5rem 1rem" }}>
-        //       Add Task
-        //     </button>
-        //   </form>
-
-        //   {/* List of Tasks */}
-        //   <ul style={{ listStyle: "none", padding: 0 }}>
-        //     {tasks.map((task, key) => (
-        //       <li
-        //         key={key}
-        //         style={{
-        //           border: "1px solid #ccc",
-        //           borderRadius: "4px",
-        //           padding: "1rem",
-        //           marginBottom: "0.5rem",
-        //         }}
-        //       >
-        //         <div>
-        //           <h3>{task.title}</h3>
-        //           <p>{task.description}</p>
-        //           {/* <img src={task.image_url} style={{ height: 70 }} /> */}
-        //           <div>
-        //             <textarea
-        //               placeholder="Updated description..."
-        //               onChange={(e) => setNewDescription(e.target.value)}
-        //             />
-        //             <button
-        //               style={{ padding: "0.5rem 1rem", marginRight: "0.5rem" }}
-        //               onClick={() => updateTask(task.id)}
-        //             >
-        //               Edit
-        //             </button>
-        //             <button
-        //               style={{ padding: "0.5rem 1rem" }}
-        //               onClick={() => deleteTask(task.id)}
-        //             >
-        //               Delete
-        //             </button>
-        //           </div>
-        //         </div>
-        //       </li>
-        //     ))}
-        //   </ul>
-        // </div>
-
         <div className="max-w-2xl mx-auto p-6">
             <h2 className="text-3xl font-bold text-center text-gray-500 mb-6">
                 📝 Task Manager
@@ -183,6 +160,7 @@ export default function TaskManager({ session }: { session: Session }) {
                     type="file"
                     accept="image/*"
                     className="mb-4 block w-full text-gray-700"
+                    onChange={handleFileChange}
                 />
 
                 <button
@@ -207,7 +185,8 @@ export default function TaskManager({ session }: { session: Session }) {
                                 </h3>
                                 <p className="text-gray-600 mt-1">{task.description}</p>
                             </div>
-                            {/* <img src={task.image_url} alt="" className="h-16 rounded-md" /> */}
+                            <img src={task.image_url} alt="task-image" className="h-16 rounded-md" />
+                            {/* <Image src={task.image_url} height={70} width={70} alt="task-image" className="rounded-md"/> */}
                         </div>
 
                         <div className="mt-4 flex flex-col sm:flex-row gap-2">
@@ -236,3 +215,4 @@ export default function TaskManager({ session }: { session: Session }) {
 
     );
 }
+
